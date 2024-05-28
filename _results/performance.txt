@@ -1,0 +1,3 @@
+Delaunay triangulation
+Time elapsed: 0 seconds
+Output stored in _results/lab_6_1.svg
