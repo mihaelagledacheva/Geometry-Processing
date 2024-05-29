@@ -208,6 +208,32 @@ private:
         }
     }
 
+    void JFA(int W, int H, int step, const int* prevIter, int* curIter, double* distance) {
+        #pragma omp parallel for
+        for (int i = 0; i < H; i++) {
+            for (int j = 0; j < W; j++) {
+                Vector p = Vector(j, i);
+                double minDist2 = std::numeric_limits<double>::max();
+                int bestSite = -1;
+                for (int k = -1; k <= 1; k++) {
+                    for (int l = -1; l <= 1; l++) {
+                        int i2 = i + k*step, j2 = j + l*step;
+                        if (i2 < 0 || j2 < 0 || i2 >= H || j2 >= W || prevIter[i2*W + j2] < 0 ) {
+                            continue;
+                        }
+                        double dist2 = (vertices[prevIter[i2*W + j2]] - p).norm2();
+                        if (dist2 < minDist2) {
+                            minDist2 = dist2;
+                            bestSite = prevIter[i2*W + j2];
+                        }
+                    }
+                }
+                curIter[i*W + j] = bestSite;
+                distance[i*W + j] = sqrt(minDist2);
+            }
+        }
+    }
+
 public:
     std::vector<Vector> vertices;
     std::vector<Triangle> triangulation;
@@ -234,6 +260,22 @@ public:
             }
         }
         return Polygon(cliped_vertices);
+    }
+    
+    void compute_voronoi(int W, int H, std::vector<int>& curIter, std::vector<double>& distance) {
+        std::vector<int> prevIter(W*H, -1);
+        curIter.resize(W*H);
+        distance.resize(W * H, std::numeric_limits<double>::max());
+        for (int i = 0; i < vertices.size(); i++) {
+            prevIter[((int)vertices[i][1])*W + (int)(vertices[i][0])] = i;
+        }
+        for (int k = W/2; k >= 1; k/=2) {
+            JFA(W, H, k, &prevIter[0], &curIter[0], distance.data());
+            prevIter.swap(curIter);
+        }
+        if ((int)(log2(W))%2 == 1) {
+            prevIter.swap(curIter);
+        }
     }
 
     void triangulate() {

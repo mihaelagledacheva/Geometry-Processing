@@ -59,6 +59,3 @@ double dot(const Vector& a, const Vector& b) {
 double cross(const Vector& a, const Vector& b) {
     return a[0] * b[1] - a[1] * b[0];
 }
-double angle(const Vector& a, const Vector& b) {
-    return std::acos(dot(a, b) / (a.norm() * b.norm()));
-}
