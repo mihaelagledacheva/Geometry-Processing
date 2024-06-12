@@ -3,6 +3,39 @@
 #include <random>
 #include <string>
 #include "vector.cpp"
+#include "nanoflann/include/nanoflann.hpp"
+
+struct PointCloud {
+    std::vector<Vector> points;
+
+    inline size_t kdtree_get_point_count() const { return points.size(); }
+
+    inline double kdtree_distance(const double *p1, const size_t idx_p2, size_t) const {
+        const double d0 = p1[0] - points[idx_p2][0];
+        const double d1 = p1[1] - points[idx_p2][1];
+        return d0 * d0 + d1 * d1;
+    }
+
+    inline double kdtree_get_pt(const size_t idx, int dim) const {
+        if (dim == 0) return points[idx][0];
+        else return points[idx][1];
+    }
+
+    template<class BBOX>
+    bool kdtree_get_bbox(BBOX &) const { return false; }
+};
+
+typedef nanoflann::KDTreeSingleIndexAdaptor<
+    nanoflann::L2_Simple_Adaptor<double, PointCloud>,
+    PointCloud, 2> my_kd_tree_t;
+
+
+class Segment {
+public:
+    Vector A, B;
+    Segment(Vector& A, Vector& B) : A(A), B(B) {}
+};
+
 
 class Triangle {
 private:
@@ -10,6 +43,18 @@ private:
         double x = (A[0] + B[0] + C[0]) / 3;
         double y = (A[1] + B[1] + C[1]) / 3;
         G = Vector(x, y);
+    }
+
+    void compute_circumcenter() {
+        double D = 2 * (A[0] * (B[1] - C[1]) + B[0] * (C[1] - A[1]) + C[0] * (A[1] - B[1]));
+        double Ox = ((A[0] * A[0] + A[1] * A[1]) * (B[1] - C[1]) +
+                     (B[0] * B[0] + B[1] * B[1]) * (C[1] - A[1]) +
+                     (C[0] * C[0] + C[1] * C[1]) * (A[1] - B[1])) / D;
+        double Oy = ((A[0] * A[0] + A[1] * A[1]) * (C[0] - B[0]) +
+                     (B[0] * B[0] + B[1] * B[1]) * (A[0] - C[0]) +
+                     (C[0] * C[0] + C[1] * C[1]) * (B[0] - A[0])) / D;
+        O = Vector(Ox, Oy);
+        R = (O - A).norm();
     }
 
     bool ccw(Vector& X, Vector& Y, Vector& Z) {
@@ -22,13 +67,15 @@ private:
 
 public:
     Vector A, B, C;
-    Vector G;
+    Vector O, G;
+    double R;
     bool valid;
     int na, nb, nc;
 
     Triangle(Vector& A, Vector& B, Vector& C) : A(A), B(B), C(C) {
         valid = true;
         na = nb = nc = -1;
+        compute_circumcenter();
         compute_barycenter();
     }
 
@@ -40,16 +87,7 @@ public:
     }
 
     bool in_circumcircle(Vector& P) {
-        double D = 2 * (A[0] * (B[1] - C[1]) + B[0] * (C[1] - A[1]) + C[0] * (A[1] - B[1]));
-        double Ox = ((A[0] * A[0] + A[1] * A[1]) * (B[1] - C[1]) +
-                     (B[0] * B[0] + B[1] * B[1]) * (C[1] - A[1]) +
-                     (C[0] * C[0] + C[1] * C[1]) * (A[1] - B[1])) / D;
-        double Oy = ((A[0] * A[0] + A[1] * A[1]) * (C[0] - B[0]) +
-                     (B[0] * B[0] + B[1] * B[1]) * (A[0] - C[0]) +
-                     (C[0] * C[0] + C[1] * C[1]) * (B[0] - A[0])) / D;
-        double OA = (Vector(Ox, Oy) - A).norm();
-        double OP = (Vector(Ox, Oy) - P).norm();
-        return OP <= OA;
+        return (O - P).norm() <= R;
     }
 
     void update_neighbor(int index, int new_index) {
@@ -122,89 +160,45 @@ private:
         return index;
     }
 
-    void remove_area(Triangle& t, int index, Vector& v, std::vector<int>& indices, Polygon& area, std::vector<int>& neighbors) {
-        t.valid = false;
-        area.vertices.push_back(t.A);
-        if (t.nc != -1) {
-            if (triangulation[t.nc].in_circumcircle(v)) {
-                triangulation[t.nc].valid = false;
-                if (triangulation[t.nc].A == t.A) {
-                    area.vertices.push_back(triangulation[t.nc].B);
-                    neighbors.push_back(triangulation[t.nc].nc);
-                    neighbors.push_back(triangulation[t.nc].na);
-                } else if (triangulation[t.nc].B == t.A) {
-                    area.vertices.push_back(triangulation[t.nc].C);
-                    neighbors.push_back(triangulation[t.nc].na);
-                    neighbors.push_back(triangulation[t.nc].nb);
+    void remove_area(Vector& v, std::vector<int>& indices, std::vector<Vector>& area, std::vector<int>& neighbors) {
+        while (true) {
+            std::vector<int> indices_new, neighbors_new;
+            std::vector<Vector> area_new;
+            for (int i = 0; i < area.size(); ++i) {
+                area_new.push_back(area[i]);
+                if (neighbors[i] != -1) {
+                    if (triangulation[neighbors[i]].in_circumcircle(v)) {
+                        triangulation[neighbors[i]].valid = false;
+                        if (triangulation[neighbors[i]].A == area[i]) {
+                            area_new.push_back(triangulation[neighbors[i]].B);
+                            neighbors_new.push_back(triangulation[neighbors[i]].nc);
+                            neighbors_new.push_back(triangulation[neighbors[i]].na);
+                        } else if (triangulation[neighbors[i]].B == area[i]) {
+                            area_new.push_back(triangulation[neighbors[i]].C);
+                            neighbors_new.push_back(triangulation[neighbors[i]].na);
+                            neighbors_new.push_back(triangulation[neighbors[i]].nb);
+                        } else {
+                            area_new.push_back(triangulation[neighbors[i]].A);
+                            neighbors_new.push_back(triangulation[neighbors[i]].nb);
+                            neighbors_new.push_back(triangulation[neighbors[i]].nc);
+                        }
+                        indices_new.push_back(neighbors[i]);
+                        indices_new.push_back(neighbors[i]);
+                    } else {
+                        neighbors_new.push_back(neighbors[i]);
+                        indices_new.push_back(indices[i]);
+                    }
                 } else {
-                    area.vertices.push_back(triangulation[t.nc].A);
-                    neighbors.push_back(triangulation[t.nc].nb);
-                    neighbors.push_back(triangulation[t.nc].nc);
+                    neighbors_new.push_back(neighbors[i]);
+                    indices_new.push_back(indices[i]);
                 }
-                indices.push_back(t.nc);
-                indices.push_back(t.nc);
-            } else {
-                neighbors.push_back(t.nc);
-                indices.push_back(index);
             }
-        } else {
-            neighbors.push_back(-1);
-            indices.push_back(index);
-        }
-        area.vertices.push_back(t.B);
-        if (t.na != -1) {
-            if (triangulation[t.na].in_circumcircle(v)) {
-                triangulation[t.na].valid = false;
-                if (triangulation[t.na].A == t.B) {
-                    area.vertices.push_back(triangulation[t.na].B);
-                    neighbors.push_back(triangulation[t.na].nc);
-                    neighbors.push_back(triangulation[t.na].na);
-                } else if (triangulation[t.na].B == t.B) {
-                    area.vertices.push_back(triangulation[t.na].C);
-                    neighbors.push_back(triangulation[t.na].na);
-                    neighbors.push_back(triangulation[t.na].nb);
-                } else {
-                    area.vertices.push_back(triangulation[t.na].A);
-                    neighbors.push_back(triangulation[t.na].nb);
-                    neighbors.push_back(triangulation[t.na].nc);
-
-                }
-                indices.push_back(t.na);
-                indices.push_back(t.na);
-            } else {
-                neighbors.push_back(t.na);
-                indices.push_back(index);
+            if (area == area_new) {
+                break;
             }
-        } else {
-            neighbors.push_back(-1);
-            indices.push_back(index);
-        }
-        area.vertices.push_back(t.C);
-        if (t.nb != -1) {
-            if (triangulation[t.nb].in_circumcircle(v)) {
-                triangulation[t.nb].valid = false;
-                if (triangulation[t.nb].A == t.C) {
-                    area.vertices.push_back(triangulation[t.nb].B);
-                    neighbors.push_back(triangulation[t.nb].nc);
-                    neighbors.push_back(triangulation[t.nb].na);
-                } else if (triangulation[t.nb].B == t.C) {
-                    area.vertices.push_back(triangulation[t.nb].C);
-                    neighbors.push_back(triangulation[t.nb].na);
-                    neighbors.push_back(triangulation[t.nb].nb);
-                } else {
-                    area.vertices.push_back(triangulation[t.nb].A);
-                    neighbors.push_back(triangulation[t.nb].nb);
-                    neighbors.push_back(triangulation[t.nb].nc);
-                }
-                indices.push_back(t.nb);
-                indices.push_back(t.nb);
-            } else {
-                neighbors.push_back(t.nb);
-                indices.push_back(index);
-            }
-        } else {
-            neighbors.push_back(-1);
-            indices.push_back(index);
+            area = std::move(area_new);
+            indices = std::move(indices_new);
+            neighbors = std::move(neighbors_new);
         }
     }
 
@@ -234,62 +228,85 @@ private:
         }
     }
 
+    bool intersection(const Vector& A, const Vector& B, const Vector& C, const Vector& D, Vector& P) {
+        Vector AB = B - A;
+        Vector CD = D - C;
+        Vector AC = C - A;
+        double det = - AB[0] * CD[1] + AB[1] * CD[0];
+        if (std::abs(det) < std::numeric_limits<double>::epsilon()) {
+            return false;
+        }
+        double t = (- AC[0] * CD[1] + AC[1] * CD[0]) / det;
+        double u = (AB[0] * AC[1] - AB[1] * AC[0]) / det;
+        if (t < 0 || t > 1 || u < 0 || u > 1) {
+            return false;
+        }
+        P = A + AB * t;
+        return true;
+    }
+    
+    bool clip_by_line(Vector& C, Vector& u, Vector& v, std::vector<Vector>& cliped_vertices, double &max_dist) {
+        bool clipped = false;
+        double dist = 0;
+        for (int i = 0; i < vertices.size(); ++i) {
+            Vector prev = vertices[(i == 0) ? vertices.size()-1 : i-1];
+            Vector vertex = vertices[i];
+            Vector next = vertices[(i == vertices.size()-1) ? 0 : i+1];
+            Vector P;
+            if (intersection(vertex, C, u, v, P)) {
+                if (intersection(vertex, prev, u, v, P)) {
+                    cliped_vertices.push_back(P);
+                    dist = std::max(dist, (C-P).norm());
+                    clipped = true;
+                }
+                if (intersection(vertex, next, u, v, P)) {
+                    cliped_vertices.push_back(P);
+                    dist = std::max(dist, (C-P).norm());
+                    clipped = true;
+                }
+            } else {
+                cliped_vertices.push_back(vertex);
+                dist = std::max(dist, (C-vertex).norm());
+            }
+        }
+        if (dist > 0) {
+            max_dist = dist;
+        }
+        return clipped;
+    }
+
+    void knn(size_t i, const PointCloud &cloud, size_t k, std::vector<size_t> &indices) {
+        my_kd_tree_t index(2, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
+        index.buildIndex();
+        indices.resize(k);
+        std::vector<double> dists(k);
+        nanoflann::KNNResultSet<double> resultSet(k);
+        resultSet.init(&indices[0], &dists[0]);
+        double query_pt[2] = {cloud.points[i][0], cloud.points[i][1]};
+        index.findNeighbors(resultSet, &query_pt[0], {10});
+    }
+
 public:
     std::vector<Vector> vertices;
     std::vector<Triangle> triangulation;
+    std::vector<Segment> voronoi;
 
     Polygon() {}
     Polygon(std::vector<Vector> vertices) : vertices(vertices) {}
-
-    Polygon clip_by_line(Vector& u, Vector& v) {
-        std::vector<Vector> cliped_vertices;
-        Vector N = Vector(v[1]-u[1], u[0]-v[0]);
-        for (int i = 0; i < vertices.size(); ++i) {
-            Vector A = vertices[std::fmod(i-1, vertices.size())];
-            Vector B = vertices[i];
-            if (dot(B-u, N) <= 0) {
-                if (dot(A-u, N) <= 0) {
-                    cliped_vertices.push_back(B);
-                } else {
-                    Vector P = A + (B-A) * dot(u-A, N) / dot(B-A, N);
-                    cliped_vertices.push_back(P);
-                }
-            } else if (dot(A-u, N) <= 0) {
-                Vector P = A + (B-A) * dot(u-A, N) / dot(B-A, N);
-                cliped_vertices.push_back(P);
-            }
-        }
-        return Polygon(cliped_vertices);
-    }
     
-    void compute_voronoi(int W, int H, std::vector<int>& curIter, std::vector<double>& distance) {
-        std::vector<int> prevIter(W*H, -1);
-        curIter.resize(W*H);
-        distance.resize(W * H, std::numeric_limits<double>::max());
-        for (int i = 0; i < vertices.size(); i++) {
-            prevIter[((int)vertices[i][1])*W + (int)(vertices[i][0])] = i;
-        }
-        for (int k = W/2; k >= 1; k/=2) {
-            JFA(W, H, k, &prevIter[0], &curIter[0], distance.data());
-            prevIter.swap(curIter);
-        }
-        if ((int)(log2(W))%2 == 1) {
-            prevIter.swap(curIter);
-        }
-    }
-
     void triangulate() {
         bound();
         for (int i = 0; i < vertices.size(); ++i) {
             int index = locate_triangle(vertices[i]);
-            std::vector<int> indices;
-            Polygon area;
-            std::vector<int> neighbors;
-            remove_area(triangulation[index], index, vertices[i], indices, area, neighbors);
+            triangulation[index].valid = false;
+            std::vector<int> indices = {index, index, index};
+            std::vector<Vector> area = {triangulation[index].A, triangulation[index].B, triangulation[index].C};
+            std::vector<int> neighbors = {triangulation[index].nc, triangulation[index].na, triangulation[index].nb};
+            remove_area(vertices[i], indices, area, neighbors);
             int n = triangulation.size();
-            int k = area.vertices.size();
+            int k = area.size();
             for (int j = 0; j < k; ++j) {
-                Triangle t = Triangle(area.vertices[j], area.vertices[(j+1)%k], vertices[i]);
+                Triangle t = Triangle(area[j], area[(j+1)%k], vertices[i]);
                 t.na = n + ((j + 1) % k);
                 t.nb = n + ((k + j - 1) % k);
                 t.nc = neighbors[j];
@@ -306,5 +323,92 @@ public:
                 triangulation[i].valid = false;
             }
         }
+    }
+
+    void compute_voronoi() {
+        for (int i = 0; i < triangulation.size(); ++i) {
+            if (triangulation[i].valid) {
+                if (triangulation[i].na != -1) {
+                    voronoi.push_back(Segment(triangulation[i].O, triangulation[triangulation[i].na].O));
+                }
+                if (triangulation[i].nb != -1) {
+                    voronoi.push_back(Segment(triangulation[i].O, triangulation[triangulation[i].nb].O));
+                }
+                if (triangulation[i].nc != -1) {
+                    voronoi.push_back(Segment(triangulation[i].O, triangulation[triangulation[i].nc].O));
+                }
+            }
+        }
+    }
+
+    void compute_voronoi2(int W, int H, std::vector<int>& curIter, std::vector<double>& distance) {
+        std::vector<int> prevIter(W*H, -1);
+        curIter.resize(W*H);
+        distance.resize(W * H, std::numeric_limits<double>::max());
+        for (int i = 0; i < vertices.size(); i++) {
+            prevIter[((int)vertices[i][1])*W + (int)(vertices[i][0])] = i;
+        }
+        for (int k = W/2; k >= 1; k/=2) {
+            JFA(W, H, k, &prevIter[0], &curIter[0], distance.data());
+            prevIter.swap(curIter);
+        }
+        if ((int)(log2(W))%2 == 1) {
+            prevIter.swap(curIter);
+        }
+    }
+
+    std::vector<Polygon> compute_voronoi3(int W, int H) {
+        std::vector<Polygon> voronoi_cells(vertices.size());
+        #pragma omp parallel for
+        for (int i = 0; i < vertices.size(); ++i) {
+            Polygon bounding_box = Polygon({Vector(0, 0), Vector(W, 0), Vector(W, H), Vector(0, H)});
+            for (int j = 0; j < vertices.size(); ++j) {
+                if (i != j) {
+                    Vector M = (vertices[i] + vertices[j]) / 2;
+                    Vector u = M + ortho(vertices[i] - vertices[j]) * sqrt(W*W + H*H);
+                    Vector v = M - ortho(vertices[i] - vertices[j]) * sqrt(W*W + H*H);
+                    std::vector<Vector> cliped_vertices;
+                    double max_dist;
+                    bounding_box.clip_by_line(vertices[i], u, v, cliped_vertices, max_dist);
+                    bounding_box = Polygon(cliped_vertices);
+                }
+            }
+            voronoi_cells[i] = bounding_box;
+        }
+        return voronoi_cells;
+    }
+
+    std::vector<Polygon> compute_voronoi4(int W, int H) {
+        std::vector<Polygon> voronoi_cells(vertices.size());
+        PointCloud cloud;
+        cloud.points = vertices;
+        #pragma omp parallel for
+        for (int i = 0; i < vertices.size(); ++i) {
+            Polygon bounding_box = Polygon({Vector(0, 0), Vector(W, 0), Vector(W, H), Vector(0, H)});
+            double max_dist = sqrt(W*W + H*H);
+            int k = vertices.size() / 8;
+            bool clipped = false;
+            while (!clipped && k < 2*vertices.size()) {
+                std::vector<size_t> indices;
+                knn(i, cloud, k, indices);
+                for (int j = 1; j < k; ++j) {
+                    if ((vertices[i] - vertices[indices[j]]).norm() < 2*max_dist) {
+                        Vector M = (vertices[i] + vertices[indices[j]]) / 2;
+                        Vector u = M + ortho(vertices[i] - vertices[indices[j]]) * sqrt(W*W + H*H);
+                        Vector v = M - ortho(vertices[i] - vertices[indices[j]]) * sqrt(W*W + H*H);
+                        std::vector<Vector> cliped_vertices;
+                        if (bounding_box.clip_by_line(vertices[i], u, v, cliped_vertices, max_dist)) {
+                            bounding_box = Polygon(cliped_vertices);
+                        }
+                    } else {
+                        clipped = true;
+                        break;
+                    }
+                }
+                k *= 2;
+            }
+            voronoi_cells[i] = bounding_box;
+        }
+        return voronoi_cells;
     }
 };

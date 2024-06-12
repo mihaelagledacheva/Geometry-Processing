@@ -59,3 +59,6 @@ double dot(const Vector& a, const Vector& b) {
 double cross(const Vector& a, const Vector& b) {
     return a[0] * b[1] - a[1] * b[0];
 }
+Vector ortho(const Vector& a) {
+    return Vector(-a[1], a[0]);
+}

@@ -1,7 +1,15 @@
-Delaunay triangulation
-Time elapsed: 5 milliseconds
-Output stored in _results/lab_6_1.svg
+Delaunay Triangulation
+Time elapsed: 22 milliseconds
+Output stored in _results/lab_6_1_1.svg and _results/lab_6_1_2.svg
 
 Jump Flooding
-Time elapsed: 231 milliseconds
-Output stored in _results/lab_6_2.svg and _results/lab_6_3.svg
+Time elapsed: 216 milliseconds
+Output stored in _results/lab_6_2_1.svg and _results/lab_6_2_2.svg
+
+Voronoi Parallel Linear Enumeration
+Time elapsed: 47 milliseconds
+Output stored in _results/lab_6_3.svg
+
+K-nearest Neighbor Search
+Time elapsed: 17 milliseconds
+Output stored in _results/lab_6_4.svg
