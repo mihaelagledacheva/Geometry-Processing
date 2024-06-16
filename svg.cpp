@@ -61,6 +61,42 @@ void save_polygons_svg(const std::vector<Polygon>& polygons, int W, int H, const
     file.close();
 }
 
+void save_centers_and_polygons_svg(const std::vector<Vector>& centers, const std::vector<Polygon>& polygons, int W, int H, const std::string& filename) {
+    std::ofstream file(filename);
+    file << "<svg width=\"" << W << "\" height=\"" << H << "\" xmlns=\"http://www.w3.org/2000/svg\">\n";
+    for (const auto& polygon : polygons) {
+        file << "<polygon points=\"";
+        for (const auto& vertex : polygon.vertices) {
+            file << vertex[0] << "," << vertex[1] << " ";
+        }
+        file << "\" stroke=\"black\" fill=\"none\" stroke-width=\"1\" />\n";
+    }
+    for (const auto& center : centers) {
+        file << "<circle cx=\"" << center[0] << "\" cy=\"" << center[1] << "\" r=\"2\" fill=\"red\" />\n";
+    }
+    file << "</svg>";
+    file.close();
+}
+
+void save_circles_and_polygons_svg(const std::vector<Vector>& centers, const std::vector<double>& radii, 
+                                   const std::vector<Polygon>& polygons, int W, int H, const std::string& filename) {
+    std::ofstream file(filename);
+    file << "<svg width=\"" << W << "\" height=\"" << H << "\" xmlns=\"http://www.w3.org/2000/svg\">\n";
+    for (const auto& polygon : polygons) {
+        file << "<polygon points=\"";
+        for (const auto& vertex : polygon.vertices) {
+            file << vertex[0] << "," << vertex[1] << " ";
+        }
+        file << "\" stroke=\"black\" fill=\"none\" stroke-width=\"1\" />\n";
+    }
+    for (size_t i = 0; i < centers.size(); ++i) {
+        file << "<circle cx=\"" << centers[i][0] << "\" cy=\"" << centers[i][1] << "\" r=\"" << radii[i]
+           << "\" fill=\"blue\" fill-opacity=\"0.5\" stroke=\"black\" stroke-width=\"1\" />\n";
+    }
+    file << "</svg>";
+    file.close();
+}
+
 void save_svg_animated(const std::vector<Polygon> &polygons, std::string filename, int frameid, int nbframes) {
     FILE* f;
     if (frameid == 0) {

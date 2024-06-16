@@ -3,6 +3,7 @@
 #include <random>
 #include <string>
 #include "vector.cpp"
+#include "liblbfgs/lib/lbfgs.c"
 #include "nanoflann/include/nanoflann.hpp"
 
 struct PointCloud {
@@ -116,6 +117,20 @@ public:
 
 class Polygon {
 private:
+    Vector compute_barycenter() {
+        double C_x = 0, C_y = 0;
+        for (int i = 0; i < vertices.size()-1; ++i) {
+            C_x += (vertices[i][0] + vertices[i+1][0]) * (vertices[i][0]*vertices[i+1][1] - vertices[i+1][0]*vertices[i][1]);
+            C_y += (vertices[i][1] + vertices[i+1][1]) * (vertices[i][0]*vertices[i+1][1] - vertices[i+1][0]*vertices[i][1]);
+        }
+        C_x += (vertices.back()[0] + vertices[0][0]) * (vertices.back()[0]*vertices[0][1] - vertices[0][0]*vertices.back()[1]);
+        C_y += (vertices.back()[1] + vertices[0][1]) * (vertices.back()[0]*vertices[0][1] - vertices[0][0]*vertices.back()[1]);
+        double A = area();
+        C_x /= 6*A;
+        C_y /= 6*A;
+        return Vector(C_x, C_y);
+    }
+
     void bound() {
         double min_x = vertices[0][0];
         double max_x = vertices[0][0];
@@ -245,7 +260,7 @@ private:
         return true;
     }
     
-    bool clip_by_line(Vector& C, Vector& u, Vector& v, std::vector<Vector>& cliped_vertices, double &max_dist) {
+    bool clip_by_line(Vector& C, Vector& u, Vector& v, std::vector<Vector>& clipped_vertices, double &max_dist) {
         bool clipped = false;
         double dist = 0;
         for (int i = 0; i < vertices.size(); ++i) {
@@ -255,17 +270,17 @@ private:
             Vector P;
             if (intersection(vertex, C, u, v, P)) {
                 if (intersection(vertex, prev, u, v, P)) {
-                    cliped_vertices.push_back(P);
+                    clipped_vertices.push_back(P);
                     dist = std::max(dist, (C-P).norm());
                     clipped = true;
                 }
                 if (intersection(vertex, next, u, v, P)) {
-                    cliped_vertices.push_back(P);
+                    clipped_vertices.push_back(P);
                     dist = std::max(dist, (C-P).norm());
                     clipped = true;
                 }
             } else {
-                cliped_vertices.push_back(vertex);
+                clipped_vertices.push_back(vertex);
                 dist = std::max(dist, (C-vertex).norm());
             }
         }
@@ -293,6 +308,15 @@ public:
 
     Polygon() {}
     Polygon(std::vector<Vector> vertices) : vertices(vertices) {}
+    
+    double area() {
+        double A = 0;
+        for (int i = 0; i < vertices.size()-1; ++i) {
+            A += vertices[i][0]*vertices[i+1][1] - vertices[i+1][0]*vertices[i][1];
+        }
+        A += vertices.back()[0]*vertices[0][1] - vertices[0][0]*vertices.back()[1];
+        return A / 2;
+    }
     
     void triangulate() {
         bound();
@@ -367,10 +391,10 @@ public:
                     Vector M = (vertices[i] + vertices[j]) / 2;
                     Vector u = M + ortho(vertices[i] - vertices[j]) * sqrt(W*W + H*H);
                     Vector v = M - ortho(vertices[i] - vertices[j]) * sqrt(W*W + H*H);
-                    std::vector<Vector> cliped_vertices;
+                    std::vector<Vector> clipped_vertices;
                     double max_dist;
-                    bounding_box.clip_by_line(vertices[i], u, v, cliped_vertices, max_dist);
-                    bounding_box = Polygon(cliped_vertices);
+                    bounding_box.clip_by_line(vertices[i], u, v, clipped_vertices, max_dist);
+                    bounding_box = Polygon(clipped_vertices);
                 }
             }
             voronoi_cells[i] = bounding_box;
@@ -396,9 +420,9 @@ public:
                         Vector M = (vertices[i] + vertices[indices[j]]) / 2;
                         Vector u = M + ortho(vertices[i] - vertices[indices[j]]) * sqrt(W*W + H*H);
                         Vector v = M - ortho(vertices[i] - vertices[indices[j]]) * sqrt(W*W + H*H);
-                        std::vector<Vector> cliped_vertices;
-                        if (bounding_box.clip_by_line(vertices[i], u, v, cliped_vertices, max_dist)) {
-                            bounding_box = Polygon(cliped_vertices);
+                        std::vector<Vector> clipped_vertices;
+                        if (bounding_box.clip_by_line(vertices[i], u, v, clipped_vertices, max_dist)) {
+                            bounding_box = Polygon(clipped_vertices);
                         }
                     } else {
                         clipped = true;
@@ -410,5 +434,114 @@ public:
             voronoi_cells[i] = bounding_box;
         }
         return voronoi_cells;
+    }
+
+    bool lloyd_iteration(int W, int H) {
+        bool convergence = true;
+        std::vector<Polygon> voronoi_cells = compute_voronoi3(W, H);
+        #pragma omp parallel for
+        for (int i = 0; i < vertices.size(); ++i) {
+            Vector barycenter = voronoi_cells[i].compute_barycenter();
+            if (!(barycenter==vertices[i])) {
+                vertices[i] = barycenter;
+                convergence = false;
+            }
+        }
+        return convergence;
+    }
+
+    std::vector<Polygon> compute_power_diagram(int W, int H, std::vector<double>& weights) {
+        std::vector<Polygon> voronoi_cells(vertices.size());
+        #pragma omp parallel for
+        for (int i = 0; i < vertices.size(); ++i) {
+            Polygon bounding_box = Polygon({Vector(0, 0), Vector(W, 0), Vector(W, H), Vector(0, H)});
+            double max_dist = sqrt(W*W + H*H);
+            for (int j = 0; j < vertices.size(); ++j) {
+                if (i != j) {
+                    Vector M = (vertices[i] + vertices[j]) / 2;
+                    double scaled_weight_diff = (weights[i] - weights[j]);
+                    M = M + (scaled_weight_diff * (vertices[j] - vertices[i]) / (2 * (vertices[i] - vertices[j]).norm2()));
+                    Vector u = M + ortho(vertices[i] - vertices[j]) * sqrt(W*W + H*H);
+                    Vector v = M - ortho(vertices[i] - vertices[j]) * sqrt(W*W + H*H);
+                    std::vector<Vector> clipped_vertices;
+                    bounding_box.clip_by_line(vertices[i], u, v, clipped_vertices, max_dist);
+                    bounding_box = Polygon(clipped_vertices);
+                }
+            }
+            voronoi_cells[i] = bounding_box;
+        }
+        return voronoi_cells;
+    }
+};
+
+
+struct Data {
+    Polygon polygon;
+    std::vector<double> target_areas;
+    std::vector<double> weights;
+    double W, H;
+};
+
+class objective_function {
+protected:
+    lbfgsfloatval_t *m_x;
+    Data data;
+
+    double compute_integral(std::vector<Vector>& vertices, Vector P_i) {
+        P_i = Vector(P_i[0], P_i[1]);
+        double integral = 0;
+        for (int i = 0; i < vertices.size(); ++i) {
+            double x1 = vertices[i][0];
+            double y1 = vertices[0][1];
+            double x2 = (i < vertices.size()-1) ? vertices[i+1][0]: vertices[0][0];
+            double y2 = (i < vertices.size()-1) ? vertices[i+1][1]: vertices[0][1];
+            integral += (x1 * y2 - x2 * y1) * 
+                        (x1 * x1 + x1 * x2 + x2 * x2 + y1 * y1 + y1 * y2 + y2 * y2 
+                        - 4 * (P_i[0] * (x1 + x2) + P_i[1] * (y1 + y2)) + 6 * (P_i.norm2()));
+        }
+        integral /= 12;
+        return integral;
+    }
+
+    static lbfgsfloatval_t _evaluate(void *instance, const lbfgsfloatval_t *x, lbfgsfloatval_t *g,
+                                     const int n, const lbfgsfloatval_t step) {
+        return reinterpret_cast<objective_function*>(instance)->evaluate(x, g, n, step);
+    }
+
+    lbfgsfloatval_t evaluate(const lbfgsfloatval_t *x, lbfgsfloatval_t *g,
+                             const int n, const lbfgsfloatval_t step) {
+        for (int i = 0; i < n; ++i) {
+            data.weights[i] = x[i];
+        }
+        std::vector<Polygon> power_diagram_cells;
+        power_diagram_cells = data.polygon.compute_power_diagram(data.W, data.H, data.weights);
+        lbfgsfloatval_t fx = 0;
+        for (int i = 0; i < n; ++i) {
+            double area = power_diagram_cells[i].area();
+            double integral = compute_integral(power_diagram_cells[i].vertices, data.polygon.vertices[i]);
+            g[i] = data.target_areas[i] - area;
+            fx += integral + data.weights[i] * (data.target_areas[i] - area);
+        }
+        return fx;
+    }
+
+public:
+    objective_function(Data data) : m_x(NULL), data(data) {}
+
+    virtual ~objective_function() {
+        if (m_x != NULL) {
+            lbfgs_free(m_x);
+            m_x = NULL;
+        }
+    }
+
+    std::vector<double> run(int N) {
+        lbfgsfloatval_t fx;
+        lbfgsfloatval_t *m_x = lbfgs_malloc(N);
+        for (int i = 0;i < N; ++i) {
+            m_x[i] = data.weights[i];
+        }
+        lbfgs(N, m_x, &fx, _evaluate, NULL, this, NULL);
+        return data.weights;
     }
 };

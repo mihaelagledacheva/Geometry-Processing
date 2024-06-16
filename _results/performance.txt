@@ -13,3 +13,15 @@ Output stored in _results/lab_6_3.svg
 K-nearest Neighbor Search
 Time elapsed: 17 milliseconds
 Output stored in _results/lab_6_4.svg
+
+Centroidal Voronoi Tessellation
+Time elapsed: 471 milliseconds
+Output stored in _results/lab_7_1_1.svg and _results/lab_7_1_2.svg
+
+Power Diagram
+Time elapsed: 5 milliseconds
+Output stored in _results/lab_7_2_1.svg and _results/lab_7_2_2.svg
+
+Semi-discrete Optimal Transport
+Time elapsed: 41 milliseconds
+Output stored in _results/lab_7_3.svg
