@@ -117,20 +117,6 @@ public:
 
 class Polygon {
 private:
-    Vector compute_barycenter() {
-        double C_x = 0, C_y = 0;
-        for (int i = 0; i < vertices.size()-1; ++i) {
-            C_x += (vertices[i][0] + vertices[i+1][0]) * (vertices[i][0]*vertices[i+1][1] - vertices[i+1][0]*vertices[i][1]);
-            C_y += (vertices[i][1] + vertices[i+1][1]) * (vertices[i][0]*vertices[i+1][1] - vertices[i+1][0]*vertices[i][1]);
-        }
-        C_x += (vertices.back()[0] + vertices[0][0]) * (vertices.back()[0]*vertices[0][1] - vertices[0][0]*vertices.back()[1]);
-        C_y += (vertices.back()[1] + vertices[0][1]) * (vertices.back()[0]*vertices[0][1] - vertices[0][0]*vertices.back()[1]);
-        double A = area();
-        C_x /= 6*A;
-        C_y /= 6*A;
-        return Vector(C_x, C_y);
-    }
-
     void bound() {
         double min_x = vertices[0][0];
         double max_x = vertices[0][0];
@@ -309,12 +295,30 @@ public:
     Polygon() {}
     Polygon(std::vector<Vector> vertices) : vertices(vertices) {}
     
+    Vector compute_barycenter() {
+        double C_x = 0, C_y = 0;
+        if (vertices.size() >= 1) {
+            for (int i = 0; i < vertices.size()-1; ++i) {
+                C_x += (vertices[i][0] + vertices[i+1][0]) * (vertices[i][0]*vertices[i+1][1] - vertices[i+1][0]*vertices[i][1]);
+                C_y += (vertices[i][1] + vertices[i+1][1]) * (vertices[i][0]*vertices[i+1][1] - vertices[i+1][0]*vertices[i][1]);
+            }
+            C_x += (vertices.back()[0] + vertices[0][0]) * (vertices.back()[0]*vertices[0][1] - vertices[0][0]*vertices.back()[1]);
+            C_y += (vertices.back()[1] + vertices[0][1]) * (vertices.back()[0]*vertices[0][1] - vertices[0][0]*vertices.back()[1]);
+            double A = area();
+            C_x /= 6*A;
+            C_y /= 6*A;
+        }
+        return Vector(C_x, C_y);
+    }
+    
     double area() {
         double A = 0;
-        for (int i = 0; i < vertices.size()-1; ++i) {
-            A += vertices[i][0]*vertices[i+1][1] - vertices[i+1][0]*vertices[i][1];
+        if (vertices.size() >= 1) {
+            for (int i = 0; i < vertices.size()-1; ++i) {
+                A += vertices[i][0]*vertices[i+1][1] - vertices[i+1][0]*vertices[i][1];
+            }
+            A += vertices.back()[0]*vertices[0][1] - vertices[0][0]*vertices.back()[1];
         }
-        A += vertices.back()[0]*vertices[0][1] - vertices[0][0]*vertices.back()[1];
         return A / 2;
     }
     

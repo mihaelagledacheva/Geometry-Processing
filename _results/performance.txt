@@ -25,3 +25,15 @@ Output stored in _results/lab_7_2_1.svg and _results/lab_7_2_2.svg
 Semi-discrete Optimal Transport
 Time elapsed: 41 milliseconds
 Output stored in _results/lab_7_3.svg
+
+Particle Simulation
+Time elapsed: 5469 milliseconds
+Output stored in _results/lab_8_1_*.svg
+
+Laguerre Simulation
+Time elapsed: 4217 milliseconds
+Output stored in _results/lab_8_2_*.svg
+
+Voronoi Simulation
+Time elapsed: 28742 milliseconds
+Output stored in _results/lab_8_3_1_*.svg and _results/lab_8_3_2_*.svg
